@@ -1,0 +1,35 @@
+# Copyright 2021 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+- name: Download and install Backint
+  block:
+    - name: Download Backint
+      get_url:
+        url: https://storage.googleapis.com/cloudsapdeploy/backint-gcs/install.sh
+        dest: "{{ backint_temp_path }}"
+
+    - name: Install Backint if needed
+      shell:
+        cmd: "SAPSYSTEMNAME={{ sap_hana_sid }} bash {{ backint_temp_path }}" # noqa 301 305
+        creates: "/usr/sap/{{ sap_hana_sid }}/SYS/global/hdb/opt/backint"
+
+    - name: Configure Backint with bucket
+      template:
+        # TODO move to templates/ dir
+        src: files/parameters.txt.j2
+        dest: "{{ backint_config_path }}"
+        mode: "0644"
+
+  # become: true
+  # become_user: "{{ sap_hana_user }}"

@@ -1,0 +1,36 @@
+# Copyright 2021 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+- name: Ensure system PKI SSFS store in the secondary Node matches with the primary Node - pulling
+  fetch:
+    src: "{{ item }}"
+    dest: /tmp/
+    flat: yes
+  loop:
+    - /usr/sap/{{ sap_hana_sid }}/SYS/global/security/rsecssfs/data/SSFS_{{ sap_hana_sid }}.DAT
+    - /usr/sap/{{ sap_hana_sid }}/SYS/global/security/rsecssfs/key/SSFS_{{ sap_hana_sid }}.KEY
+  when: sap_hana_is_primary | bool
+
+- name: Ensure system PKI SSFS store in the secondary Node matches with the primary Node - pushing
+  copy:
+    src: "/tmp/{{ item.file }}"
+    dest: "{{ item.path }}{{ item.file }}"
+    owner: "{{ sap_hana_user }}"
+    group: sapsys
+    mode: '{{ item.mode }}'
+  loop:
+    - { path: '/usr/sap/{{ sap_hana_sid }}/SYS/global/security/rsecssfs/data/', file: 'SSFS_{{ sap_hana_sid }}.DAT', mode: '0600' }
+    - { path: '/usr/sap/{{ sap_hana_sid }}/SYS/global/security/rsecssfs/key/', file: 'SSFS_{{ sap_hana_sid }}.KEY', mode: '0640' }
+  when: not (sap_hana_is_primary | bool)
+  notify: "Delete ssfs keys stored in /tmp"

@@ -1,0 +1,78 @@
+# Copyright 2021 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+- name: set retry count
+  set_fact:
+    sap_pacemaker_retries: '{{ sap_pacemaker_retries | int + 1 }}'
+
+- block:
+  - name: get pacemaker status for rhel
+    command: pcs status
+    failed_when: false
+    changed_when: false
+    register: pcs_status
+
+  - name: print pacemaker status for rhel
+    debug:
+      msg: '{{ pcs_status.stdout_lines }}'
+
+  - name: assert that pacemaker is configured and running for rhel
+    assert:
+      that:
+      - '{{ pcs_status.stdout | regex_search(item) != None }}'
+      fail_msg: 'pattern not found in pcs status output: {{ item }}'
+    loop: '{{ sap_expected_pacemaker_status }}'
+
+  rescue:
+  - fail:
+      msg: number of tries exceeded waiting for pacemaker
+    when: sap_pacemaker_retries | int == 30
+
+  - name: wait for retry
+    wait_for:
+      timeout: 10
+
+  # Recursively include task file as retry on blocks is not supported.
+  - include_tasks: pacemaker.yml
+  when: ansible_os_family == 'RedHat'
+
+- block:
+  - name: get pacemaker status for suse
+    command: crm status
+    failed_when: false
+    changed_when: false
+    register: crm_status
+
+  - name: print pacemaker status for suse
+    debug:
+      msg: '{{ crm_status.stdout_lines }}'
+
+  - name: assert that pacemaker is configured and running for suse
+    assert:
+      that:
+      - '{{ crm_status.stdout | regex_search(item) != None }}'
+      fail_msg: 'pattern not found in crm status output: {{ item }}'
+    loop: '{{ sap_expected_pacemaker_status }}'
+
+  rescue:
+  - fail:
+      msg: number of tries exceeded waiting for pacemaker
+    when: sap_pacemaker_retries | int == 30
+
+  - name: wait for retry
+    wait_for:
+      timeout: 10
+
+  - include_tasks: pacemaker.yml
+  when: ansible_os_family == 'Suse'

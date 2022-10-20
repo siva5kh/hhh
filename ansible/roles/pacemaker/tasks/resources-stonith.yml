@@ -1,0 +1,137 @@
+# Copyright 2021 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+- block:
+  - command: pcs property show
+    register: pcs_command_status
+    changed_when: false
+  - name: configure property startup-fencing
+    command: pcs property set startup-fencing=true
+    when: |
+      'startup-fencing: true' not in pcs_command_status.stdout
+  - name: configure property stonith-enabled
+    command: pcs property set stonith-enabled=true
+    when: |
+      'stonith-enabled: true' not in pcs_command_status.stdout
+  - name: configure property stonith-timeout
+    command: pcs property set stonith-timeout=300s
+    when: |
+      'stonith-timeout: 300s' not in pcs_command_status.stdout
+
+  - name: define fence_gce instance argument
+    set_fact:
+      fence_gce_instance_argument: '{{ "port" if fence_agents_release | int < 30 else "plug" }}'
+
+  - command: |
+      pcs stonith show
+    register: pcs_command_status
+    changed_when: false
+  - name: configure stonith resources
+    command: >-
+      pcs stonith create STONITH-{{ item.instance }} fence_gce
+      {{ fence_gce_instance_argument }}={{ item.instance }}
+      zone={{ item.zone }}
+      project={{ sap_project_id }}
+      method=cycle
+    loop:
+    - instance: '{{ sap_primary_instance }}'
+      zone: '{{ sap_primary_zone }}'
+    - instance: '{{ sap_secondary_instance }}'
+      zone: '{{ sap_secondary_zone }}'
+    when: |
+      'STONITH-' + item.instance not in pcs_command_status.stdout
+
+  - command: |
+      pcs constraint location show
+    register: pcs_command_status
+    changed_when: false
+  - name: configure stonith location constraints
+    command: >-
+      pcs constraint location STONITH-{{ item.this }}
+      prefers {{ item.other }}=INFINITY
+    loop:
+    - this: '{{ sap_primary_instance }}'
+      other: '{{ sap_secondary_instance }}'
+    - this: '{{ sap_secondary_instance }}'
+      other: '{{ sap_primary_instance }}'
+    when: |
+      'Resource: STONITH-' + item.this not in pcs_command_status.stdout
+  when: |
+    ansible_os_family == 'RedHat'
+
+- block:
+  - command: |
+      crm configure get_property stonith-enabled
+    register: crm_command_status
+    changed_when: false
+  - name: configure property stonith-enabled
+    command: |
+      crm configure property stonith-enabled=true
+    when: |
+      crm_command_status.stdout != 'true'
+
+  - command: |
+      crm configure get_property stonith-timeout
+    register: crm_command_status
+    changed_when: false
+  - name: configure property stonith-timeout
+    command: |
+      crm configure property stonith-timeout=300s
+    when: |
+      crm_command_status.stdout != '300s'
+
+  - command: |
+      crm configure show STONITH-*
+    register: crm_command_status
+    changed_when: false
+    failed_when: false
+  - name: configure stonith resources
+    command: >-
+      crm configure primitive STONITH-{{ item }} stonith:external/gcpstonith
+      op monitor interval=300s timeout=60s on-fail=restart
+      op start interval=0 timeout=60s onfail=restart
+      params instance_name={{ item }} gcloud_path="{{ sap_gcloud_path }}" logging=yes
+      meta failure-timeout=3600
+    register: crm_configure_stonith
+    changed_when: crm_configure_stonith.rc == 0
+    failed_when: >-
+      crm_configure_stonith.rc != 0 and
+      'Found existing' not in crm_configure_stonith.stderr
+    when: |
+      'STONITH-' + item not in crm_command_status.stdout
+    loop:
+    - '{{ sap_primary_instance }}'
+    - '{{ sap_secondary_instance }}'
+
+  - command: |
+      crm configure show LOC_STONITH*
+    register: crm_command_status
+    changed_when: false
+    failed_when: false
+  - name: configure location constraints for stonith
+    command: >-
+      crm configure location LOC_STONITH-{{ item }}
+      STONITH-{{ item }} -inf: {{ item }}
+    register: crm_configure_stonith
+    changed_when: crm_configure_stonith.rc == 0
+    failed_when: >-
+      crm_configure_stonith.rc != 0 and
+      'Found existing' not in crm_configure_stonith.stderr
+    when: |
+      'location LOC_STONITH-' + item not in crm_command_status.stdout
+    loop:
+    - '{{ sap_primary_instance }}'
+    - '{{ sap_secondary_instance }}'
+  when: |
+    ansible_os_family == 'Suse'

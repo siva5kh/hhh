@@ -1,0 +1,79 @@
+# Copyright 2021 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+- name: ensure autofs is installed
+  package:
+    name: autofs
+  register: autofs_installed
+  retries: 12
+  until: autofs_installed is succeeded
+  delay: 10
+
+- name: ensure autofs auto.master includes auto.master.d
+  lineinfile:
+    path: /etc/auto.master
+    # Suse comments out this line from auto.master.
+    regex: '^\s*#\s*([+]dir:/etc/auto.master.d)'
+    backrefs: true
+    line: '\1'
+  register: ensure_autofs_includes
+
+- name: add sap.autofs to auto.master.d
+  template:
+    src: etc/auto.master.d/sap.autofs.j2
+    dest: /etc/auto.master.d/sap.autofs
+    owner: root
+    group: root
+    mode: '0644'
+  register: add_sap_autofs
+
+- name: configure autofs auto.sap
+  template:
+    src: etc/auto.sap.j2
+    dest: /etc/auto.sap
+    owner: root
+    group: root
+    mode: '0644'
+  register: configure_autofs_auto_sap
+
+- meta: flush_handlers
+
+- name: ensure autofs is started and enabled on boot
+  systemd:
+    name: autofs
+    enabled: true
+    state: restarted
+  when: >-
+    ensure_autofs_includes is changed or
+    add_sap_autofs is changed or
+    configure_autofs_auto_sap is changed
+
+- name: trigger automounts
+  command: ls {{ item.mountpoint }}
+  loop: '{{ nfs_client_mounts }}'
+  when: >-
+    ensure_autofs_includes is changed or
+    add_sap_autofs is changed or
+    configure_autofs_auto_sap is changed
+
+- name: ensure permissions are correct on nfs mount points
+  file:
+    path: '{{ item.mountpoint }}'
+    owner: '{{ item.owner | default("root") }}'
+    group: '{{ item.group | default("root") }}'
+    mode: '{{ item.mode | default("0755") }}'
+    state: directory
+  loop: '{{ nfs_client_mounts }}'
+  when: |
+    'owner' in item or 'group' in item or 'mode' in item

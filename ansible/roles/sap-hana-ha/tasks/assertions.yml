@@ -1,0 +1,92 @@
+# Copyright 2021 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+- name: define instance name for primary
+  set_fact:
+    sap_instance_name: '{{ sap_hana_primary_instance_name }}'
+  when: sap_hana_is_primary | bool
+
+- name: define instance name for secondary
+  set_fact:
+    sap_instance_name: '{{ sap_hana_secondary_instance_name }}'
+  when: not (sap_hana_is_primary | bool)
+
+- name: define pacemaker expected status for redhat
+  set_fact:
+    # sap-assertions role requires sap_expected_pacemaker_status variable
+    sap_expected_pacemaker_status:
+    - 2 nodes configured
+    - '8 resource(s| instances) configured'
+    - 'Online: \[ {{ sap_hana_primary_instance_name }} {{ sap_hana_secondary_instance_name }} \]'
+    - 'STONITH-{{ sap_hana_primary_instance_name }}[\t\s]+\(stonith:fence_gce\):[\t\s]+Started[\t\s]+{{ sap_hana_secondary_instance_name }}'
+    - 'STONITH-{{ sap_hana_secondary_instance_name }}[\t\s]+\(stonith:fence_gce\):[\t\s]+Started[\t\s]+{{ sap_hana_primary_instance_name }}'
+    - 'rsc_vip_int-primary[\t\s]+\(ocf::heartbeat:IPaddr2\):[\t\s]+Started[\t\s]+{{ sap_hana_primary_instance_name }}'
+    - 'rsc_healthcheck-primary[\t\s]+\(service:haproxy\):[\t\s]+Started[\t\s]+{{ sap_hana_primary_instance_name }}'
+    - 'Masters: \[ {{ sap_hana_primary_instance_name }} \]'
+    - 'Slaves: \[ {{ sap_hana_secondary_instance_name }} \]'
+    - 'corosync: active/enabled'
+    - 'pacemaker: active/enabled'
+    - 'pcsd: active/enabled'
+  when: ansible_os_family == 'RedHat'
+
+- name: define pacemaker expected status for suse
+  set_fact:
+    sap_expected_pacemaker_status:
+    - 2 nodes configured
+    - 8 resource
+    - 'Online: \[ {{ sap_hana_primary_instance_name }} {{ sap_hana_secondary_instance_name }} \]'
+    - 'STONITH-{{ sap_hana_primary_instance_name }}[\t\s]+\(stonith:external/gcpstonith\):[\t\s]+Started[\t\s]+{{ sap_hana_secondary_instance_name }}'
+    - 'STONITH-{{ sap_hana_secondary_instance_name }}[\t\s]+\(stonith:external/gcpstonith\):[\t\s]+Started[\t\s]+{{ sap_hana_primary_instance_name }}'
+    - 'rsc_vip_int-primary[\t\s]+\(ocf::heartbeat:IPaddr2\):[\t\s]+Started[\t\s]+{{ sap_hana_primary_instance_name }}'
+    - 'rsc_healthcheck-primary[\t\s]+\(ocf::heartbeat:anything\):[\t\s]+Started[\t\s]+{{ sap_hana_primary_instance_name }}'
+    - 'Started: \[ {{ sap_hana_primary_instance_name }} {{ sap_hana_secondary_instance_name }} \]'
+    - 'Masters: \[ {{ sap_hana_primary_instance_name }} \]'
+    - 'Slaves: \[ {{ sap_hana_secondary_instance_name }} \]'
+  when: ansible_os_family == 'Suse'
+
+- name: include sap assertions role
+  include_role:
+    name: sap-assertions
+  vars:
+    sap_become_user: '{{ sap_hana_user }}'
+    sap_expected_processes:
+    - hdbdaemon, HDB Daemon, GREEN, Running
+    - hdbcompileserver, HDB Compileserver, GREEN, Running
+    - hdbindexserver, HDB Indexserver-{{ sap_hana_sid }}, GREEN, Running
+    - hdbnameserver, HDB Nameserver, GREEN, Running
+    - hdbpreprocessor, HDB Preprocessor, GREEN, Running
+    - hdbwebdispatcher, HDB Web Dispatcher, GREEN, Running
+    - hdbxsengine, HDB XSEngine-{{ sap_hana_sid }}, GREEN, Running
+    sap_has_pacemaker: true
+    sap_instances:
+    - '{{ sap_instance_name }}, {{ sap_hana_instance_number | int }}, 5{{ sap_hana_instance_number }}13, 5{{ sap_hana_instance_number }}14, 0.3, HDB|HDB_WORKER, GREEN'
+    sap_instance_number: '{{ sap_hana_instance_number }}'
+  when: sap_hana_deployment_create_initial_tenant == 'y'
+
+- name: include sap assertions role with no HANA tenant DB
+  include_role:
+    name: sap-assertions
+  vars:
+    sap_become_user: '{{ sap_hana_user }}'
+    sap_expected_processes:
+    - hdbdaemon, HDB Daemon, GREEN, Running
+    - hdbcompileserver, HDB Compileserver, GREEN, Running
+    - hdbnameserver, HDB Nameserver, GREEN, Running
+    - hdbpreprocessor, HDB Preprocessor, GREEN, Running
+    - hdbwebdispatcher, HDB Web Dispatcher, GREEN, Running
+    sap_has_pacemaker: true
+    sap_instances:
+    - '{{ sap_instance_name }}, {{ sap_hana_instance_number | int }}, 5{{ sap_hana_instance_number }}13, 5{{ sap_hana_instance_number }}14, 0.3, HDB|HDB_WORKER, GREEN'
+    sap_instance_number: '{{ sap_hana_instance_number }}'
+  when: sap_hana_deployment_create_initial_tenant == 'n'

@@ -1,0 +1,42 @@
+# Copyright 2021 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+- name: Stat google-cloud-sdk commands
+  stat:
+    path: '/usr/bin/{{ item }}'
+  loop:
+  - gcloud
+  - gsutil
+  register: stat_google_cloud_sdk
+
+- name: Ensure {{ gcloud_install_dir }}/google-cloud-sdk is not already present
+  file:
+    path: '{{ gcloud_install_dir }}/google-cloud-sdk'
+    state: absent
+  when: false in stat_google_cloud_sdk.results | map(attribute="stat.exists") | list
+
+- name: unarchive google-cloud-sdk
+  unarchive:
+    src: '{{ cloudsdk_url }}'
+    dest: '{{ gcloud_install_dir }}'
+    remote_src: true
+    creates: '{{ gcloud_install_dir }}/google-cloud-sdk'
+  when: false in stat_google_cloud_sdk.results | map(attribute="stat.exists") | list
+
+- name: updating alternatives
+  command: >-
+    update-alternatives --install /usr/bin/{{ item.item }} {{ item.item }}
+    {{ gcloud_install_dir }}/google-cloud-sdk/bin/{{ item.item }} 1 --force
+  loop: '{{ stat_google_cloud_sdk.results }}'
+  when: not item.stat.exists

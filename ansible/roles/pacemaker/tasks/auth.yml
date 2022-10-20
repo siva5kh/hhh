@@ -1,0 +1,121 @@
+# Copyright 2021 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+- block:
+  - command: |
+      awk -F : '/^{{ sap_cluster_user }}:/{print $2}' /etc/shadow
+    register: cluster_password_field
+    changed_when: false
+    no_log: true
+
+  - name: define cluster user password fields
+    set_fact:
+      sap_pw_fields: '{{ cluster_password_field.stdout.split("$") }}'
+
+  - name: ensure cluster user password is set
+    user:
+      name: '{{ sap_cluster_user }}'
+      password: '{{ sap_cluster_user_password | password_hash("sha512") }}'
+    when: sap_pw_fields | length == 1    # No password has been set
+    no_log: true
+
+  - name: ensure cluster user password is set
+    user:
+      name: '{{ sap_cluster_user }}'
+      password: '{{ sap_cluster_user_password | password_hash("sha512", sap_pw_fields[2]) }}'
+    when: sap_pw_fields | length == 4    # Password has been set before
+    no_log: true
+
+  - name: ensure password authentication is enabled for sshd
+    lineinfile:
+      path: /etc/ssh/sshd_config
+      regex: '^PasswordAuthentication no'
+      line: '#PasswordAuthentication no'
+    register: modify_sshd_config
+  when: |
+    ansible_os_family == 'RedHat'
+
+- block:
+  - name: Create /root/.ssh if not exist
+    file:
+      path: /root/.ssh
+      state: directory
+      mode: '0700'
+
+  - name: stat shared ssh private key
+    stat:
+      path: /root/.ssh/id_rsa
+    register: stat_ssh_priv_key
+    run_once: true
+
+  - name: stat shared ssh public key
+    stat:
+      path: /root/.ssh/id_rsa.pub
+    register: stat_ssh_pub_key
+    run_once: true
+
+  - name: create shared ssh key
+    shell: yes | ssh-keygen -t rsa -N '' -f /root/.ssh/id_rsa
+    when: false in (stat_ssh_priv_key.stat.exists, stat_ssh_pub_key.stat.exists)
+    run_once: true
+
+  - name: read shared ssh private key
+    slurp:
+      src: /root/.ssh/id_rsa
+    register: shared_ssh_priv_key
+    run_once: true
+    no_log: true
+
+  - name: read shared ssh public key
+    slurp:
+      src: /root/.ssh/id_rsa.pub
+    register: shared_ssh_pub_key
+    run_once: true
+    no_log: true
+
+  - name: copy shared ssh private key
+    copy:
+      content: '{{ item.content }}'
+      dest: '{{ item.dest }}'
+      mode: '{{ item.mode }}'
+      owner: root
+      group: root
+    loop:
+    - content: '{{ shared_ssh_priv_key.content | b64decode }}'
+      dest: /root/.ssh/id_rsa
+      mode: '0600'
+    - content: '{{ shared_ssh_pub_key.content | b64decode }}'
+      dest: /root/.ssh/id_rsa.pub
+      mode: '0644'
+    no_log: true
+
+  - name: add public key to authorized_keys
+    authorized_key:
+      user: root
+      key: '{{ shared_ssh_pub_key.content | b64decode }}'
+
+  - name: ensure root login is enabled for sshd
+    lineinfile:
+      path: /etc/ssh/sshd_config
+      regex: '^PermitRootLogin no'
+      line: '#PermitRootLogin no'
+    register: modify_sshd_config
+  when: |
+    ansible_os_family == 'Suse'
+
+- name: ensure sshd reads modified config
+  service:
+    name: sshd.service
+    state: reloaded
+  when: modify_sshd_config is changed

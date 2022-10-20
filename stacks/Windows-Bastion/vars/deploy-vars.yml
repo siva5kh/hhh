@@ -1,0 +1,38 @@
+# Copyright 2021 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Terraform common vars for hana and netweaver (optional)
+sap_zone: us-central1-a
+
+# Terraform common vars for hana and netweaver (required)
+sap_project_id: sap-iac-test
+sap_source_image_family: windows-2019
+sap_source_image_project: windows-cloud
+sap_subnetwork_project_id: '{{ sap_project_id }}'
+sap_subnetwork: default
+sap_tf_state_bucket: sap-terraform-state-bg
+sap_tf_state_bucket_prefix: hanastudio
+
+# Terraform hana variables (required)
+sap_win_instance_name: sap-hanstbg
+sap_win_service_account_name: sap-common-sa
+
+# Terraform hana variables (optional)
+sap_win_instance_type: e2-standard-2
+sap_win_autodelete_boot_disk: "true"
+sap_win_boot_disk_size: 50
+sap_win_boot_disk_type: pd-ssd
+sap_win_network_tags: ["sap-allow-all"]
+sap_win_use_public_ip: true
+sap_win_install_files_bucket_folder: "sap-deployment-media/Windows-Bastion"

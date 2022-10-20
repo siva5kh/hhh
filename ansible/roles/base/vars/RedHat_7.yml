@@ -1,0 +1,54 @@
+# Copyright 2021 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+cloudsdk_python_export_path: /usr/bin/python2.7
+gcloud_install_dir: /usr/local
+package_list:
+  - "@base"
+  - "@compat-libraries"
+  - "@large-systems"
+  - "@network-file-system-client"
+  - "@performance"
+  - acl
+  - uuidd
+  - tcsh
+  - psmisc
+  - compat-sap-c++-5
+  - compat-sap-c++-6
+  - compat-sap-c++-7
+  - compat-sap-c++-9
+  - libatomic
+  - unar.x86_64
+  - tuned-profiles-sap-hana
+  - joe
+  - resource-agents-sap-hana.x86_64
+  - numactl-libs.x86_64
+  - libtool-ltdl.x86_64
+  - nfs-utils.x86_64
+  - pacemaker
+  - pcs
+  - lvm2.x86_64
+  - compat-sap-c++-5.x86_64
+  - csh
+  - autofs
+  - ndctl
+  - libatomic
+  - unzip
+  - libsss_autofs
+  - python2-pip
+  # For DB2
+  - socat
+  - ksh
+  - pam.i686
+  - libstdc++.i686

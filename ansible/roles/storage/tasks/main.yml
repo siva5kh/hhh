@@ -1,0 +1,115 @@
+# Copyright 2021 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+- name: Verifying disks attached to system
+  stat:
+    path: "/dev/disk/by-id/google-{{ ansible_hostname }}-{{ item.name }}"
+  with_items: "{{ disks }}"
+  register: diskpath_host
+  tags:
+    - disk_setup
+
+- name: Verifying disks attached to system
+  stat:
+    # For systems that do not use the hostname in the device name.
+    path: "/dev/disk/by-id/google-{{ item.name }}"
+  with_items: "{{ disks }}"
+  register: diskpath_nohost
+  tags:
+    - disk_setup
+
+- name: Define disk path
+  set_fact:
+    diskpath: '{{ diskpath_host }}'
+  when: true in diskpath_host.results | map(attribute='stat') | map(attribute='exists') | list
+  tags:
+    - disk_setup
+
+- name: Define disk path
+  set_fact:
+    diskpath: '{{ diskpath_nohost }}'
+  when: true in diskpath_nohost.results | map(attribute='stat') | map(attribute='exists') | list
+  tags:
+    - disk_setup
+
+- name: Create disk dictionary
+  set_fact:
+    disksdict: "{{ disksdict | default({}) | combine( {item.item.partition_path: item.stat.lnk_source} ) }}"
+  with_items: "{{ diskpath.results }}"
+  tags:
+    - disk_setup
+
+- name: Create disk partitions
+  parted:
+    device: "{{ item.value }}"
+    number: 1
+    label: gpt
+    state: present
+  with_items: "{{ disksdict|dict2items }}"
+  tags:
+    - disk_setup
+
+- name: Create logical volume groups
+  lvg:
+    vg: "{{ item.key }}"
+    pvs: "{{ item.value }}1"
+    state: present
+  with_items: "{{ disksdict|dict2items }}"
+  tags:
+    - disk_setup
+
+- name: Create app logical volumes
+  lvol:
+    state: present
+    vg: "{{ item.value.vol }}"
+    lv: "{{ item.key }}"
+    size: "{{ item.value.size }}"
+    pvs: "{{ item.value.pvs | default(omit) }}"
+  with_dict: "{{ logvols | default({}) }}"
+  tags:
+    - disk_setup
+
+- name: Create filesystems
+  filesystem:
+    dev:  /dev/{{ item.value.vol}}/{{ item.key }}
+    fstype: "{{ item.value.fstype | default('xfs')}}"
+    force: no
+    opts: "{{ item.value.opts | default(omit) }}"
+  with_dict: "{{ logvols | default({}) }}"
+  ignore_errors: True
+  tags:
+    - disk_setup
+
+- name: Mount and make fstab entries
+  mount:
+    name: "{{ item.value.mountpoint }}"
+    fstype: "{{ item.value.fstype | default('xfs')}}"
+    opts: defaults
+    src: "/dev/{{ item.value.vol }}/{{ item.key }}"
+    state: "{{ 'present' if item.value.fstype | default('xfs') == 'swap' else 'mounted' }}"
+  with_dict: "{{ logvols | default({}) }}"
+  tags:
+    - disk_setup
+  when: item.value.mount | default(true)
+  register: storage_mount
+
+- name: Swap on
+  command: "swapon /dev/{{ item.item.value.vol }}/{{ item.item.key }}"
+  loop: "{{
+    storage_mount.results
+    | selectattr('item.value.fstype', 'defined')
+    | selectattr('item.value.fstype', 'equalto', 'swap')
+    | list
+  }}"
+  when: item is changed

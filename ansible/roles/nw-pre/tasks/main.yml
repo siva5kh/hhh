@@ -1,0 +1,52 @@
+# Copyright 2021 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+- name: Ensure destination directory is present
+  file:
+    path: '{{ sap_nw_install_files_dest }}/{{ item }}'
+    mode: 0755
+    state: directory
+  with_items: "{{ sap_product_vars[sap_product_and_version].install_files }}"
+
+- name: Get filesystem type of media destination directory
+  shell: df -T {{ sap_nw_install_files_dest | quote }} | tail -n 1 | awk '{print $2}'
+  register: sap_nw_install_files_dest_fstype
+  changed_when: false
+
+- name: Determine if media destination directory is on NFS
+  set_fact:
+    sap_nw_install_files_dest_is_nfs: '{{ sap_nw_install_files_dest_fstype.stdout.startswith("nfs") }}'
+
+- name: Define bucket and prefix
+  set_fact:
+    sap_nw_install_files_bucket_and_prefix: '{{ sap_nw_install_files_bucket }}'
+  when: |
+    '/' in sap_nw_install_files_bucket
+  run_once: '{{ sap_nw_install_files_dest_is_nfs | bool }}'
+
+- name: Define bucket and prefix
+  set_fact:
+    sap_nw_install_files_bucket_and_prefix: '{{ sap_nw_install_files_bucket }}/{{ sap_product_and_version }}'
+  when: |
+    '/' not in sap_nw_install_files_bucket
+  run_once: '{{ sap_nw_install_files_dest_is_nfs | bool }}'
+
+- name: Copy netweaver binaries from GC
+  command: >-
+    gsutil -m rsync -r
+    gs://{{ sap_nw_install_files_bucket_and_prefix }}/{{ item }} {{ sap_nw_install_files_dest }}/{{ item }}
+  with_items: "{{ sap_product_vars[sap_product_and_version].install_files }}"
+  environment:
+    CLOUDSDK_PYTHON: '{{ cloudsdk_python_export_path }}'
+  run_once: '{{ sap_nw_install_files_dest_is_nfs | bool }}'

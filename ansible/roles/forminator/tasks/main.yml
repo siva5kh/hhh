@@ -1,0 +1,207 @@
+# Copyright 2021 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+- name: ensure state bucket exists
+  gcp_storage_bucket:
+    name: '{{ sap_tf_state_bucket }}'
+    auth_kind: application
+    project: '{{ sap_project_id }}'
+  when: sap_state == 'present'
+
+- name: ensure hana backint backup bucket exists
+  gcp_storage_bucket:
+    name: '{{ sap_hana_backint_bucket_name }}'
+    auth_kind: application
+    project: '{{ sap_project_id }}'
+  when: sap_hana_backint_install|bool == true
+
+- name: check if ssh key files are present
+  stat:
+    path: '{{ item }}'
+  loop:
+  - '{{ sap_ssh_priv_key }}'
+  - '{{ sap_ssh_pub_key }}'
+  register: stat_ssh_key_files
+  changed_when: false
+  when: sap_ansible_is_push_mode
+
+- name: define ssh key file existence
+  set_fact:
+    stat_ssh_key_files_exists: "{{ stat_ssh_key_files.results | map(attribute='stat') | map(attribute='exists') | list }}"
+  when: sap_ansible_is_push_mode
+
+- block:
+  - name: download ssh key files
+    debug:
+      msg: 'Download {{ item }} from bucket not yet implemented'
+    loop:
+    - '{{ sap_ssh_priv_key }}'
+    - '{{ sap_ssh_pub_key }}'
+  - name: ensure ssh key file directory is present
+    file:
+      path: '{{ sap_ssh_priv_key | dirname }}'
+      mode: '0700'
+      state: directory
+  - name: clean up stale ssh key file
+    file:
+      path: '{{ item }}'
+      state: absent
+    loop:
+    - '{{ sap_ssh_priv_key }}'
+    - '{{ sap_ssh_pub_key }}'
+    when: false in stat_ssh_key_files_exists and true in stat_ssh_key_files_exists
+  - name: generate key files
+    command: |
+      ssh-keygen -t rsa -N '' -m pem -f {{ sap_ssh_priv_key }}
+    args:
+      creates: '{{ sap_ssh_priv_key }}'
+  - name: store ssh key files
+    debug:
+      msg: 'Upload {{ item | basename }} to bucket not yet implemented'
+    loop:
+    - '{{ sap_ssh_priv_key }}'
+    - '{{ sap_ssh_pub_key }}'
+  - name: ensure correct permissions on ssh key files
+    file:
+      path: '{{ item.path }}'
+      mode: '{{ item.mode }}'
+    loop:
+    - path: '{{ sap_ssh_priv_key }}'
+      mode: '0600'
+    - path: '{{ sap_ssh_pub_key }}'
+      mode: '0644'
+  when:
+  - sap_ansible_is_push_mode
+  - false in stat_ssh_key_files_exists
+
+- block:
+  - name: check for existing terraform executable
+    command: which terraform
+    register: existing_tf_exec
+    changed_when: false
+    failed_when: false
+  - name: check for existing terraform version
+    command: '{{ existing_tf_exec.stdout }} version'
+    register: existing_tf_version
+    changed_when: false
+    when: existing_tf_exec.rc == 0
+  - name: define if existing terraform version is correct
+    set_fact:
+      existing_tf_version_correct: '{{
+        "stdout_lines" in existing_tf_version and existing_tf_version.stdout_lines and
+        existing_tf_version.stdout_lines[0] == "Terraform v{}".format(sap_tf_version)
+      }}'
+  - name: ensure cache directory exists
+    file:
+      path: '{{ sap_cache_dir }}/terraform-{{ sap_tf_version }}'
+      state: directory
+    when: not existing_tf_version_correct
+  - name: download and unarchive terraform
+    unarchive:
+      src: '{{ sap_tf_download_url }}'
+      dest: '{{ sap_cache_dir }}/terraform-{{ sap_tf_version }}'
+      remote_src: true
+    when: not existing_tf_version_correct
+  - name: define terraform executable
+    set_fact:
+      sap_tf_exec: '{{ existing_tf_exec.stdout }}'
+    when: existing_tf_version_correct
+  - name: define terraform executable
+    set_fact:
+      sap_tf_exec: '{{ sap_cache_dir }}/terraform-{{ sap_tf_version }}/terraform'
+    when: not existing_tf_version_correct
+
+- block:
+  - name: create a tempdir for terraform variables
+    tempfile:
+      state: directory
+    register: terraform_tempdir
+    changed_when: false
+  - name: write terraform variables to a file
+    copy:
+      dest: '{{ terraform_tempdir.path }}/vars.tf.json'
+      content: '{{ (sap_tf_variables_defaults if sap_ansible_is_push_mode else {}) | combine(sap_tf_variables) | to_json }}'
+    changed_when: false
+  - name: apply terraform
+    terraform:
+      backend_config:
+        bucket: '{{ sap_tf_state_bucket }}'
+        prefix: '{{ sap_tf_state_bucket_prefix }}'
+      binary_path: '{{ sap_tf_exec }}'
+      force_init: true
+      project_path: '{{ sap_tf_project_path }}'
+      state: '{{ sap_state }}'
+      variables_file: '{{ terraform_tempdir.path }}/vars.tf.json'
+    register: terraform
+  always:
+  - name: clean up terraform directories
+    file:
+      path: '{{ item }}'
+      state: absent
+    changed_when: terraform is changed
+    loop:
+    - '{{ sap_tf_project_path }}/.terraform'
+    - '{{ sap_tf_project_path }}/.terraform.lock.hcl'
+    - '{{ terraform_tempdir.path }}'
+
+# No need to continue if `terraform destroy` was run.
+- meta: end_play
+  when: sap_state == 'absent'
+
+- block:
+  - name: create a tempdir for add_host tasks
+    tempfile:
+      state: directory
+    register: add_host_tempdir
+    changed_when: false
+  - name: define add_host tasks
+    copy:
+      dest: '{{ add_host_tempdir.path }}/add_hosts.yml'
+      content: |
+        #jinja2:lstrip_blocks: True
+        {% for item in terraform.outputs.inventory.value %}
+        - name: add {{ item.host }} to inventory
+          add_host:
+            name: {{ item.host }}
+            ansible_user: {{ sap_ssh_user }}
+            ansible_ssh_private_key_file: {{ sap_ssh_priv_key }}
+            groups: {{ item.groups | to_json }}
+            terraform: {{ terraform | to_json }}
+            {% for k, v in (item.vars | default({})).items() %}
+            {{ k }}: {{ v | to_json }}
+            {% endfor %}
+        {% endfor %}
+  - name: include add_host tasks
+    include_tasks:
+      file: '{{ add_host_tempdir.path }}/add_hosts.yml'
+  always:
+  - name: clean up add_host tempdir
+    file:
+      path: '{{ add_host_tempdir.path }}'
+      state: absent
+
+- name: wait for hosts
+  # Run a command with sudo to ensure the guest agent has added `sap_ssh_user` _and_ it
+  # is present in the sudoers file, otherwise later the ansible connection can fail with:
+  # FAILED! => {"msg": "Missing sudo password"}
+  command: >-
+    ssh -i {{ sap_ssh_priv_key }} -o StrictHostKeyChecking=no
+    {{ sap_ssh_user }}@{{ item.host }} sudo true
+  register: can_ssh
+  retries: 12
+  delay: 10
+  until: can_ssh is succeeded
+  loop: '{{ terraform.outputs.inventory.value }}'
+  changed_when: false
+  when: sap_ansible_is_push_mode
